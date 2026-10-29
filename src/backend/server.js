@@ -1,17 +1,19 @@
 
-import express from 'express'
-import cors from 'cors'
-import workshopRoutes from './routes/workshopRoutes.js'
+import pg from 'pg'
+import 'dotenv/config'
 
-const app = express()
+const { Pool } = pg
 
-app.use(cors())
-app.use(express.json())
-
-app.use('/api/workshops', workshopRoutes)
-
-const PORT = process.env.PORT || 5000
-
-app.listen(PORT, () => {
-  console.log(`Servidor iniciado en el puerto ${PORT}`)
+const pool = new Pool({
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT || 5432),
+    database: process.env.DB_NAME,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD
 })
+
+pool.on('error', (error) => {
+    console.error('Error inesperado en PostgreSQL:', error)
+})
+
+export default pool
