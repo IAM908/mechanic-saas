@@ -1,6 +1,6 @@
 import pool from '../db/database.js'
 
-const getClients = async (req, res) => {
+export const getClients = async (req, res) => {
     try {
         const businessId = req.user.business_id
 
@@ -23,7 +23,7 @@ const getClients = async (req, res) => {
     }
 }
 
-const getClientsId = async (req, res) => {
+export const getClientsId = async (req, res) => {
     try {
         const businessId = req.user.business_id
         const { id } = req.params
@@ -62,7 +62,7 @@ const getClientsId = async (req, res) => {
     }
 }
 
-const createClient = async (req, res) => {
+export const createClient = async (req, res) => {
     try {
         const businessId = req.user.business_id
         const { name, plate, phone } = req.body
@@ -106,3 +106,5 @@ const createClient = async (req, res) => {
         })
     }
 }
+
+export default { getClients, getClientsId, createClient }
