@@ -1,13 +1,7 @@
 
 import express from 'express'
 
-import {
-    createWorkSession,
-    getWorkSessions,
-    getWorkSessionById,
-    updateWorkSession,
-    finishWorkSession
-} from '../controllers/workSessionController.js'
+import workSession from '../controllers/workSessionController.js'
 
 import authenticate from '../middleware/authenticate.js'
 import requireRoles from '../middleware/requireRoles.js'
@@ -18,35 +12,35 @@ router.get(
     '/',
     authenticate,
     requireRoles('owner', 'admin', 'mechanic'),
-    getWorkSessions
+    workSession.getWorkSessions
 )
 
 router.get(
     '/:id',
     authenticate,
     requireRoles('owner', 'admin', 'mechanic'),
-    getWorkSessionById
+    workSession.getWorkSessionById
 )
 
 router.post(
     '/',
     authenticate,
     requireRoles('owner', 'admin', 'mechanic'),
-    createWorkSession
+    workSession.createWorkSession
 )
 
 router.patch(
     '/:id',
     authenticate,
     requireRoles('owner', 'admin', 'mechanic'),
-    updateWorkSession
+    workSession.updateWorkSession
 )
 
 router.patch(
     '/:id/finish',
     authenticate,
     requireRoles('owner', 'admin', 'mechanic'),
-    finishWorkSession
+    workSession.finishWorkSession
 )
 
 export default router

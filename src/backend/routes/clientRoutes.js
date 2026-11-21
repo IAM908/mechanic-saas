@@ -25,9 +25,11 @@ router.get(
     getClientsId
 )
 
-router.get(
+router.post(
     '/',
     authenticate,
     requireRoles('owner', 'admin'),
     createClient
 )
+
+export default router

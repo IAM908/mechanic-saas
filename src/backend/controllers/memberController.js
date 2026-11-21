@@ -1,5 +1,5 @@
 
-import pool from ('../db/database.js')
+import pool from '../db/database.js'
 import bcrypt from 'bcrypt'
 
 const validRoles = ['admin', 'mechanic']

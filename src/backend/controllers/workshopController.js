@@ -1,23 +1,31 @@
-
 import pool from '../db/database.js'
-
 
 const getWorkshops = async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT * FROM workshops ORDER BY id DESC'
+      `SELECT id, name, phone, address, created_at
+       FROM businesses
+       WHERE id = $1`,
+      [req.user.business_id]
     )
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Taller no encontrado'
+      })
+    }
 
     return res.status(200).json({
       success: true,
-      data: result.rows
+      data: result.rows[0]
     })
   } catch (error) {
-    console.error('Error al obtener talleres:', error)
+    console.error('Error al obtener el taller:', error)
 
     return res.status(500).json({
       success: false,
-      message: 'Error al obtener los talleres'
+      message: 'Error al obtener la informacion del taller'
     })
   }
 }
@@ -26,7 +34,7 @@ const createWorkshop = async (req, res) => {
   try {
     const { name, phone, address } = req.body
 
-    if (!name || !name.trim()) {
+    if (typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({
         success: false,
         message: 'El nombre del taller es obligatorio'
@@ -34,10 +42,14 @@ const createWorkshop = async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO workshops (name, phone, address)
+      `INSERT INTO businesses (name, phone, address)
        VALUES ($1, $2, $3)
-       RETURNING *`,
-      [name.trim(), phone || null, address || null]
+       RETURNING id, name, phone, address, created_at`,
+      [
+        name.trim(),
+        typeof phone === 'string' && phone.trim() ? phone.trim() : null,
+        typeof address === 'string' && address.trim() ? address.trim() : null
+      ]
     )
 
     return res.status(201).json({

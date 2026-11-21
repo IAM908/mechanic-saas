@@ -1,6 +1,5 @@
 import pool from '../db/database.js'
 
-
 const validStatuses = [
   'pending',
   'assigned',
@@ -11,6 +10,15 @@ const validStatuses = [
   'review',
   'completed',
   'cancelled'
+]
+
+const technicalStatuses = [
+  'in_progress',
+  'paused',
+  'waiting_parts',
+  'waiting_approval',
+  'review',
+  'completed'
 ]
 
 const allowedTransitions = {
@@ -31,6 +39,8 @@ const allowedTransitions = {
   cancelled: []
 }
 
+const isValidId = (value) => /^\d+$/.test(String(value)) && Number(value) >= 1
+
 const getSessionById = async (sessionId, businessId) => {
   const result = await pool.query(
     `SELECT ws.*
@@ -39,7 +49,7 @@ const getSessionById = async (sessionId, businessId) => {
        ON wo.id = ws.work_order_id
      WHERE ws.id = $1
        AND wo.business_id = $2`,
-    [sessionId, businessId]
+    [Number(sessionId), businessId]
   )
 
   return result.rows[0]
@@ -50,18 +60,18 @@ const createWorkSession = async (req, res) => {
     const { work_order_id, description } = req.body
     const businessId = req.user.business_id
 
-    if (!work_order_id || !description?.trim()) {
+    if (!isValidId(work_order_id) || typeof description !== 'string' || !description.trim()) {
       return res.status(400).json({
-        message: 'La orden y la descripción son obligatorias.'
+        message: 'Un ID de orden válido y una descripción son obligatorios.'
       })
     }
 
     const orderResult = await pool.query(
-      `SELECT id
+      `SELECT id, mechanic_id
        FROM work_orders
        WHERE id = $1
          AND business_id = $2`,
-      [work_order_id, businessId]
+      [Number(work_order_id), businessId]
     )
 
     if (orderResult.rows.length === 0) {
@@ -70,16 +80,21 @@ const createWorkSession = async (req, res) => {
       })
     }
 
+    const orderMechanicId = orderResult.rows[0].mechanic_id
+    const initialStatus = orderMechanicId ? 'assigned' : 'pending'
+
     const result = await pool.query(
       `INSERT INTO work_sessions (
         work_order_id,
+        mechanic_id,
         description,
         status,
-        created_at
+        created_at,
+        updated_at
       )
-      VALUES ($1, $2, 'pending', NOW())
+      VALUES ($1, $2, $3, $4, NOW(), NOW())
       RETURNING *`,
-      [work_order_id, description.trim()]
+      [Number(work_order_id), orderMechanicId, description.trim(), initialStatus]
     )
 
     return res.status(201).json({
@@ -100,6 +115,12 @@ const getWorkSessions = async (req, res) => {
     const businessId = req.user.business_id
     const { work_order_id } = req.query
 
+    if (work_order_id !== undefined && !isValidId(work_order_id)) {
+      return res.status(400).json({
+        message: 'El parámetro work_order_id no es válido.'
+      })
+    }
+
     const values = [businessId]
 
     let query = `
@@ -111,7 +132,7 @@ const getWorkSessions = async (req, res) => {
     `
 
     if (work_order_id) {
-      values.push(work_order_id)
+      values.push(Number(work_order_id))
       query += ` AND ws.work_order_id = $${values.length}`
     }
 
@@ -133,6 +154,12 @@ const getWorkSessions = async (req, res) => {
 
 const getWorkSessionById = async (req, res) => {
   try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({
+        message: 'El ID de la sesión no es válido.'
+      })
+    }
+
     const session = await getSessionById(
       req.params.id,
       req.user.business_id
@@ -154,17 +181,19 @@ const getWorkSessionById = async (req, res) => {
   }
 }
 
-// PATCH /api/work-sessions/:id
 const updateWorkSession = async (req, res) => {
   try {
     const sessionId = req.params.id
     const businessId = req.user.business_id
+    const { role, id: currentUserId } = req.user
 
-    const {
-      description,
-      mechanic_id,
-      status
-    } = req.body
+    if (!isValidId(sessionId)) {
+      return res.status(400).json({
+        message: 'El ID de la sesión no es válido.'
+      })
+    }
+
+    const { description, mechanic_id, status } = req.body
 
     const session = await getSessionById(sessionId, businessId)
 
@@ -174,19 +203,34 @@ const updateWorkSession = async (req, res) => {
       })
     }
 
-    if (
-      session.status === 'completed' ||
-      session.status === 'cancelled'
-    ) {
+    if (session.status === 'completed' || session.status === 'cancelled') {
       return res.status(400).json({
         message: 'La sesión ya terminó y no puede modificarse.'
       })
     }
 
-    if (
-      status !== undefined &&
-      !validStatuses.includes(status)
-    ) {
+    // Reglas de propiedad (Ownership) según el rol
+    if (role === 'mechanic') {
+      if (String(session.mechanic_id) !== String(currentUserId)) {
+        return res.status(403).json({
+          message: 'Solo el mecánico asignado puede modificar esta sesión.'
+        })
+      }
+
+      if (mechanic_id !== undefined) {
+        return res.status(403).json({
+          message: 'No tienes permisos para reasignar mecánicos.'
+        })
+      }
+    }
+
+    if ((role === 'owner' || role === 'admin') && status !== undefined && technicalStatuses.includes(status)) {
+      return res.status(403).json({
+        message: 'Solo el mecánico asignado puede cambiar el estado técnico de la reparación.'
+      })
+    }
+
+    if (status !== undefined && !validStatuses.includes(status)) {
       return res.status(400).json({
         message: 'Estado no válido.',
         validStatuses
@@ -204,28 +248,36 @@ const updateWorkSession = async (req, res) => {
       })
     }
 
-    if (
-      description !== undefined &&
-      (typeof description !== 'string' || !description.trim())
-    ) {
+    if (description !== undefined && (typeof description !== 'string' || !description.trim())) {
       return res.status(400).json({
         message: 'La descripción no puede estar vacía.'
       })
     }
 
-    if (
-      mechanic_id !== undefined &&
-      mechanic_id !== null &&
-      (!Number.isInteger(Number(mechanic_id)) || Number(mechanic_id) <= 0)
-    ) {
-      return res.status(400).json({
-        message: 'El identificador del mecánico no es válido.'
-      })
+    if (mechanic_id !== undefined && mechanic_id !== null) {
+      if (!isValidId(mechanic_id)) {
+        return res.status(400).json({
+          message: 'El identificador del mecánico no es válido.'
+        })
+      }
+
+      const mechanicCheck = await pool.query(
+        `SELECT id
+         FROM users
+         WHERE id = $1 AND business_id = $2 AND role = 'mechanic' AND is_active = TRUE`,
+        [Number(mechanic_id), businessId]
+      )
+
+      if (mechanicCheck.rows.length === 0) {
+        return res.status(400).json({
+          message: 'El mecánico no pertenece a este taller o está inactivo.'
+        })
+      }
     }
 
     const nextMechanicId =
       mechanic_id !== undefined
-        ? mechanic_id
+        ? (mechanic_id === null ? null : Number(mechanic_id))
         : session.mechanic_id
 
     let nextStatus = status ?? session.status
@@ -239,10 +291,7 @@ const updateWorkSession = async (req, res) => {
       nextStatus = 'assigned'
     }
 
-    if (
-      nextStatus === 'assigned' &&
-      !nextMechanicId
-    ) {
+    if (nextStatus === 'assigned' && !nextMechanicId) {
       return res.status(400).json({
         message: 'Debes asignar un mecánico para pasar a assigned.'
       })
@@ -271,24 +320,18 @@ const updateWorkSession = async (req, res) => {
     }
 
     if (mechanic_id !== undefined) {
-      addField('mechanic_id', mechanic_id)
+      addField('mechanic_id', nextMechanicId)
     }
 
     if (nextStatus !== session.status) {
       addField('status', nextStatus)
     }
 
-    if (
-      nextStatus === 'in_progress' &&
-      !session.started_at
-    ) {
+    if (nextStatus === 'in_progress' && !session.started_at) {
       fields.push('started_at = NOW()')
     }
 
-    if (
-      nextStatus === 'completed' ||
-      nextStatus === 'cancelled'
-    ) {
+    if (nextStatus === 'completed' || nextStatus === 'cancelled') {
       fields.push('ended_at = NOW()')
     } else if (nextStatus !== session.status) {
       fields.push('ended_at = NULL')
@@ -300,7 +343,9 @@ const updateWorkSession = async (req, res) => {
       })
     }
 
-    values.push(sessionId)
+    fields.push('updated_at = NOW()')
+
+    values.push(Number(sessionId))
     const sessionPosition = values.length
 
     values.push(businessId)
@@ -338,6 +383,12 @@ const updateWorkSession = async (req, res) => {
 
 const finishWorkSession = async (req, res) => {
   try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({
+        message: 'El ID de la sesión no es válido.'
+      })
+    }
+
     const session = await getSessionById(
       req.params.id,
       req.user.business_id
@@ -346,6 +397,15 @@ const finishWorkSession = async (req, res) => {
     if (!session) {
       return res.status(404).json({
         message: 'Sesión no encontrada.'
+      })
+    }
+
+    if (
+      req.user.role !== 'mechanic' ||
+      String(session.mechanic_id) !== String(req.user.id)
+    ) {
+      return res.status(403).json({
+        message: 'Solo el mecánico asignado puede finalizar esta sesión.'
       })
     }
 
@@ -359,14 +419,15 @@ const finishWorkSession = async (req, res) => {
     const result = await pool.query(
       `UPDATE work_sessions AS ws
        SET status = 'completed',
-           ended_at = NOW()
+           ended_at = NOW(),
+           updated_at = NOW()
        FROM work_orders AS wo
        WHERE ws.id = $1
          AND ws.work_order_id = wo.id
          AND wo.business_id = $2
          AND ws.status = 'review'
        RETURNING ws.*`,
-      [req.params.id, req.user.business_id]
+      [Number(req.params.id), req.user.business_id]
     )
 
     if (result.rows.length === 0) {
@@ -388,7 +449,15 @@ const finishWorkSession = async (req, res) => {
   }
 }
 
-module.exports = {
+export {
+  createWorkSession,
+  getWorkSessions,
+  getWorkSessionById,
+  updateWorkSession,
+  finishWorkSession
+}
+
+export default {
   createWorkSession,
   getWorkSessions,
   getWorkSessionById,
